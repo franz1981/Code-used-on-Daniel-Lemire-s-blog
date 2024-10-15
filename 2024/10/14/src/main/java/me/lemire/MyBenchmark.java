@@ -54,17 +54,21 @@ public class MyBenchmark {
     }
 
     public static int replaceBackslashTable1(char[] original, char[] newArray) {
-        int index = 0;
+        int newArrayLength = 0;
         for (char c : original) {
-            byte b = silly_table1[c%256];
-            if (c < 256 &&  b != 0) {
-                newArray[index++] = '\\';
-                newArray[index++] = (char)b;
+            // copy regardless into output; this allow the loop to be unrolled ;)
+            newArray[newArrayLength] = c;
+            byte b = silly_table1[c % 256];
+            if (c < 256 && b != 0) {
+                // we need to copy from the last known index to the current one, excluded
+                newArray[newArrayLength] = '\\';
+                newArray[newArrayLength + 1] = (char) b;
+                newArrayLength += 2;
             } else {
-                newArray[index++] = c;
+                newArrayLength++;
             }
         }
-        return index;
+        return newArrayLength;
     }
 
 
@@ -85,17 +89,21 @@ public class MyBenchmark {
     }
 
     public static int replaceBackslashTable2(char[] original, char[] newArray) {
-        int index = 0;
+        int newArrayLength = 0;
         for (char c : original) {
-            byte b = silly_table2[c%256];
-            if (c < 256 &&  b > 0) {
-                newArray[index++] = '\\';
-                newArray[index++] = (char)b;
+            // copy regardless into output; this allow the loop to be unrolled ;)
+            newArray[newArrayLength] = c;
+            byte b = silly_table2[c % 256];
+            if (c < 256 && b != 0) {
+                // we need to copy from the last known index to the current one, excluded
+                newArray[newArrayLength] = '\\';
+                newArray[newArrayLength + 1] = (char) b;
+                newArrayLength += 2;
             } else {
-                newArray[index++] = c;
+                newArrayLength++;
             }
         }
-        return index;
+        return newArrayLength;
     }
 
     public static int replaceBackslash3(char[] original, char[] newArray) {
@@ -118,21 +126,26 @@ public class MyBenchmark {
     }
 
     public static int replaceBackslashTable3(char[] original, char[] newArray) {
-        int index = 0;
+        int newArrayLength = 0;
         for (char c : original) {
-            byte b = silly_table3[c%256];
-            if (c < 256 && b > 0) {
-                newArray[index++] = '\\';
-                newArray[index++] = (char)b;
+            // copy regardless into output; this allow the loop to be unrolled ;)
+            newArray[newArrayLength] = c;
+            byte b = silly_table3[c % 256];
+            if (c < 256 && b != 0) {
+                // we need to copy from the last known index to the current one, excluded
+                newArray[newArrayLength] = '\\';
+                newArray[newArrayLength + 1] = (char) b;
+                newArrayLength += 2;
             } else {
-                newArray[index++] = c;
+                newArrayLength++;
             }
         }
-        return index;
+        return newArrayLength;
     }
 
     @State(Scope.Benchmark)
     public static class BenchmarkState {
+
         @Param({"65536"})
         public int size;
         public char[] inputstring;
@@ -145,7 +158,8 @@ public class MyBenchmark {
             inputstring = new char[size];
             int count = size;
             for(int k = 0; k < size; k++) {
-                inputstring[k] = (char)random.nextInt(0, 256);
+                int value = random.nextInt(0, 256);
+                inputstring[k] = (char)value;
                 if(silly_table3[inputstring[k]] > 0) {
                     count++;
                 }
