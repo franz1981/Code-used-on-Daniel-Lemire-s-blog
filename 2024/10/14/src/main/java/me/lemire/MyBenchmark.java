@@ -3,12 +3,8 @@ package me.lemire;
 import org.openjdk.jmh.annotations.Benchmark;
 
 import org.openjdk.jmh.annotations.*;
-import org.openjdk.jmh.infra.BenchmarkParams;
 import org.openjdk.jmh.infra.Blackhole;
-
-import java.util.Arrays;
-import java.util.BitSet;
-import java.util.Random;
+import java.util.concurrent.ThreadLocalRandom;
 
 @Measurement(iterations = 10, time = 1)
 @Warmup(iterations = 5, time = 1)
@@ -55,21 +51,17 @@ public class MyBenchmark {
     }
 
     public static int replaceBackslashTable1(char[] original, char[] newArray) {
-        int newArrayLength = 0;
+        int index = 0;
         for (char c : original) {
-            // copy regardless into output; this allow the loop to be unrolled ;)
-            newArray[newArrayLength] = c;
-            byte b = silly_table1[c % 256];
-            if (c < 256 && b != 0) {
-                // we need to copy from the last known index to the current one, excluded
-                newArray[newArrayLength] = '\\';
-                newArray[newArrayLength + 1] = (char) b;
-                newArrayLength += 2;
+            byte b = silly_table1[c%256];
+            if (c < 256 &&  b != 0) {
+                newArray[index++] = '\\';
+                newArray[index++] = (char)b;
             } else {
-                newArrayLength++;
+                newArray[index++] = c;
             }
         }
-        return newArrayLength;
+        return index;
     }
 
 
@@ -90,21 +82,17 @@ public class MyBenchmark {
     }
 
     public static int replaceBackslashTable2(char[] original, char[] newArray) {
-        int newArrayLength = 0;
+        int index = 0;
         for (char c : original) {
-            // copy regardless into output; this allow the loop to be unrolled ;)
-            newArray[newArrayLength] = c;
-            byte b = silly_table2[c % 256];
-            if (c < 256 && b != 0) {
-                // we need to copy from the last known index to the current one, excluded
-                newArray[newArrayLength] = '\\';
-                newArray[newArrayLength + 1] = (char) b;
-                newArrayLength += 2;
+            byte b = silly_table2[c%256];
+            if (c < 256 &&  b > 0) {
+                newArray[index++] = '\\';
+                newArray[index++] = (char)b;
             } else {
-                newArrayLength++;
+                newArray[index++] = c;
             }
         }
-        return newArrayLength;
+        return index;
     }
 
     public static int replaceBackslash3(char[] original, char[] newArray) {
@@ -127,30 +115,21 @@ public class MyBenchmark {
     }
 
     public static int replaceBackslashTable3(char[] original, char[] newArray) {
-        int newArrayLength = 0;
+        int index = 0;
         for (char c : original) {
-            // copy regardless into output; this allow the loop to be unrolled ;)
-            newArray[newArrayLength] = c;
-            byte b = silly_table3[c % 256];
-            if (c < 256 && b != 0) {
-                // we need to copy from the last known index to the current one, excluded
-                newArray[newArrayLength] = '\\';
-                newArray[newArrayLength + 1] = (char) b;
-                newArrayLength += 2;
+            byte b = silly_table3[c%256];
+            if (c < 256 && b > 0) {
+                newArray[index++] = '\\';
+                newArray[index++] = (char)b;
             } else {
-                newArrayLength++;
+                newArray[index++] = c;
             }
         }
-        return newArrayLength;
+        return index;
     }
 
     @State(Scope.Benchmark)
     public static class BenchmarkState {
-
-
-        @Param({"3", "50"})
-        public int specialCharPercentage;
-
         @Param({"65536"})
         public int size;
         public char[] inputstring;
@@ -158,76 +137,19 @@ public class MyBenchmark {
 
 
         @Setup(Level.Trial)
-        public void setUp(BenchmarkParams params) {
+        public void setUp() {
+            ThreadLocalRandom random = ThreadLocalRandom.current();
             inputstring = new char[size];
-            int outputLength = populateChars(params, (index, latinChar) -> inputstring[index] = (char) latinChar, size, specialCharPercentage);
-            outputstring = new char[outputLength];
-        }
-    }
-
-    // better be safe and keep it the same to have reproducible results
-    private static final int SEED = 42;
-
-    @FunctionalInterface
-    private interface IntIntBiConsumer {
-        void accept(int index, int latinChar);
-    }
-
-    /**
-     * Populates the input string with latin characters and special characters, based on the specialCharsProbability:
-     */
-    private static int populateChars(BenchmarkParams params, IntIntBiConsumer latinCharProducer, int count,
-                                     int specialCharsProbability) {
-        byte[] specialChars = specialCharsFor(params);
-        byte[] latinChars = latinCharsExcluding(specialChars);
-        Random random = new Random(SEED);
-        int outputLength = count;
-        for (int i = 0; i < count; i++) {
-            if (random.nextInt( 100) <= specialCharsProbability) {
-                int specialCharIndex = random.nextInt(specialChars.length);
-                latinCharProducer.accept(i, Byte.toUnsignedInt(specialChars[specialCharIndex]));
-                outputLength++;
-            } else {
-                int latinCharIndex = random.nextInt(latinChars.length);
-                latinCharProducer.accept(i, Byte.toUnsignedInt(latinChars[latinCharIndex]));
+            // we want to size the output array with the worst case scenario
+            int count = size;
+            for(int k = 0; k < size; k++) {
+                inputstring[k] = (char)random.nextInt(0, 256);
+                if(silly_table3[inputstring[k]] > 0) {
+                    count++;
+                }
             }
+            outputstring = new char[count];
         }
-         return outputLength;
-    }
-
-    private static byte[] specialCharsFor(BenchmarkParams params) {
-        final byte[] specialChars;
-        if (params.getBenchmark().contains("1")) {
-            specialChars = new byte[1];
-            specialChars[0] = '\\';
-        } else if (params.getBenchmark().contains("2")) {
-            specialChars = new byte[2];
-            specialChars[0] = '\\';
-            specialChars[1] = '\n';
-        } else if (params.getBenchmark().contains("3")) {
-            specialChars = new byte[3];
-            specialChars[0] = '\\';
-            specialChars[1] = '\n';
-            specialChars[2] = '\t';
-        } else {
-            throw new IllegalArgumentException("Unknown benchmark: " + params.getBenchmark());
-        }
-        return specialChars;
-    }
-
-    private static byte[] latinCharsExcluding(byte[] specialChars) {
-        BitSet specialCharsSet = new BitSet(256);
-        for (byte specialChar : specialChars) {
-            specialCharsSet.set(specialChar);
-        }
-        BitSet latinChars = new BitSet(256);
-        latinChars.set(0, 255);
-        latinChars.andNot(specialCharsSet);
-        byte[] nonSpecialLatinChars = new byte[latinChars.cardinality()];
-        for (int i = latinChars.nextSetBit(0), j = 0; i >= 0; i = latinChars.nextSetBit(i + 1), j++) {
-            nonSpecialLatinChars[j] = (byte) i;
-        }
-        return nonSpecialLatinChars;
     }
 
     @Benchmark
