@@ -6,6 +6,9 @@ import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.infra.BenchmarkParams;
 import org.openjdk.jmh.infra.Blackhole;
 
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.VarHandle;
+import java.nio.ByteOrder;
 import java.util.Arrays;
 import java.util.BitSet;
 import java.util.Random;
@@ -154,7 +157,9 @@ public class MyBenchmark {
         @Param({"65536"})
         public int size;
         public char[] inputstring;
+        public byte[] latinInputString;
         public char[] outputstring;
+        public byte[] latinOutputString;
 
 
         @Setup(Level.Trial)
@@ -162,6 +167,11 @@ public class MyBenchmark {
             inputstring = new char[size];
             int outputLength = populateChars(params, (index, latinChar) -> inputstring[index] = (char) latinChar, size, specialCharPercentage);
             outputstring = new char[outputLength];
+            latinInputString = new byte[size];
+            for (int i = 0; i < size; i++) {
+                latinInputString[i] = (byte) inputstring[i];
+            }
+            latinOutputString = new byte[outputLength + 7];
         }
     }
 
@@ -230,6 +240,58 @@ public class MyBenchmark {
         return nonSpecialLatinChars;
     }
 
+    private static final VarHandle LONG_COMPRESS_WRITER = MethodHandles.byteArrayViewVarHandle(long[].class, ByteOrder.LITTLE_ENDIAN);
+    private static final VarHandle INT_READER = MethodHandles.byteArrayViewVarHandle(int[].class, ByteOrder.LITTLE_ENDIAN);
+
+    public static int replaceBackslashRawCompressedTable3(byte[] original, byte[] newArray) {
+        int newArrayLength = 0;
+        int fourCharsBatches = original.length / 4;
+        for (int b = 0; b < fourCharsBatches; b++) {
+            int i = b * 4;
+            long fourChars = 0;
+            long compressMask = 0;
+            int fourReadChars = (int) INT_READER.get(original, i);
+            for (int j = 0; j < 4; j++) {
+                int ch0 = (fourReadChars >>> (j * 8)) & 0xFF;
+                byte b0 = silly_table3[ch0];
+                int zeroIfEqualsZeroOrMinusOneIfNot = ((b0 | -b0) >> 31);
+                // put the jth 2 bytes chars in the right fourChars slots
+                int firstChar = ((~zeroIfEqualsZeroOrMinusOneIfNot & ch0) | (zeroIfEqualsZeroOrMinusOneIfNot & '\\'));
+                int twoChars = (b0 << 8) | firstChar;
+                fourChars |= (long) twoChars << (j * 16);
+                // put the jth 2 bytes mask in the right compressMask slots
+                compressMask |= (long) (~zeroIfEqualsZeroOrMinusOneIfNot & 0xFF00) << (j * 16);
+            }
+            compressMask = ~compressMask;
+            // compress the fourChars into the newArray; this could be the same too!
+            long compressedChars = Long.compress(fourChars, compressMask);
+            LONG_COMPRESS_WRITER.set(newArray, newArrayLength, compressedChars);
+            int chars = Long.bitCount(compressMask) / 8;
+            newArrayLength += chars;
+        }
+        int tail = original.length % 4;
+        for (int t = 0; t < tail; t++) {
+            int i = fourCharsBatches * 4 + t;
+            newArrayLength = writeToOutput(newArray, original[i], newArrayLength);
+        }
+        return newArrayLength;
+    }
+
+    private static final VarHandle SHORT_WRITER = MethodHandles.byteArrayViewVarHandle(short[].class, ByteOrder.LITTLE_ENDIAN);
+
+    private static int writeToOutput(byte[] newArray, byte c, int newArrayLength) {
+        int ch0 = c & 0xFF;
+        byte b0 = silly_table3[ch0];
+        int zeroIfEqualsZeroOrMinusOneIfNot = ((b0 | -b0) >> 31);
+        // branch-less assign \\ if b != 0 or c if b == 0
+        int firstChar = ((~zeroIfEqualsZeroOrMinusOneIfNot & ch0) | (zeroIfEqualsZeroOrMinusOneIfNot & '\\'));
+        short twoChars = (short) ((b0 << 8) | firstChar);
+        SHORT_WRITER.set(newArray, newArrayLength, twoChars);
+        // branch-less increment by 2 if b != 0 or 1 if b == 0
+        newArrayLength += 1 + (zeroIfEqualsZeroOrMinusOneIfNot & 1);
+        return newArrayLength;
+    }
+
     @Benchmark
     public void benchReplaceBackslash1(Blackhole blackhole, BenchmarkState state) {
         blackhole.consume(replaceBackslash1(state.inputstring, state.outputstring));
@@ -257,6 +319,11 @@ public class MyBenchmark {
     @Benchmark
     public void benchReplaceBackslashTable3(Blackhole blackhole, BenchmarkState state) {
         blackhole.consume(replaceBackslashTable3(state.inputstring, state.outputstring));
+    }
+
+    @Benchmark
+    public void benchReplaceBackslashRawCompressedTable3(Blackhole blackhole, BenchmarkState state) {
+        blackhole.consume(replaceBackslashRawCompressedTable3(state.latinInputString, state.latinOutputString));
     }
 
 }
