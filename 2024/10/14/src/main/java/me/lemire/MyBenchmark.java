@@ -9,7 +9,6 @@ import org.openjdk.jmh.infra.Blackhole;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 import java.nio.ByteOrder;
-import java.util.Arrays;
 import java.util.BitSet;
 import java.util.Random;
 
@@ -243,31 +242,67 @@ public class MyBenchmark {
     private static final VarHandle LONG_COMPRESS_WRITER = MethodHandles.byteArrayViewVarHandle(long[].class, ByteOrder.LITTLE_ENDIAN);
     private static final VarHandle INT_READER = MethodHandles.byteArrayViewVarHandle(int[].class, ByteOrder.LITTLE_ENDIAN);
 
+
+    public static long transformMSBSetIntoFF(long input) {
+        // keep only MSB: TODO needed here?
+        // long mask = 0x8080808080808080L;
+        // long isolated = input & mask;
+        return ((input >>> 7) * 0xFF);
+    }
+
+    // it set the MSB of the zero bytes, zero otherwise
+    private static long setMSBonZeroBytes(long word) {
+        long tmp = (word & 0x7F7F7F7F7F7F7F7FL) + 0x7F7F7F7F7F7F7F7FL;
+        // this is necessary since we can have negative ones, which already set the MSB (!)
+        // TODO verify if it really is needed!
+        tmp = ~(tmp | word | 0x7F7F7F7F7F7F7F7FL);
+        return tmp;
+    }
+
+    private static long ffNotZeroBytes(long input) {
+        return transformMSBSetIntoFF(setMSBonZeroBytes(input) ^ 0x8080808080808080L);
+    }
+
+
+    public static void main(String[] args) {
+        final byte[] input  = new byte[] { 'a', 'b', '\n', '\\'};
+        final byte[] output = new byte[input.length * 2];
+        replaceBackslashRawCompressedTable3(input, output);
+    }
+
     public static int replaceBackslashRawCompressedTable3(byte[] original, byte[] newArray) {
         int newArrayLength = 0;
         int fourCharsBatches = original.length / 4;
         for (int b = 0; b < fourCharsBatches; b++) {
             int i = b * 4;
-            long fourChars = 0;
-            long compressMask = 0;
-            int fourReadChars = (int) INT_READER.get(original, i);
-            for (int j = 0; j < 4; j++) {
-                int ch0 = (fourReadChars >>> (j * 8)) & 0xFF;
-                byte b0 = silly_table3[ch0];
-                int zeroIfEqualsZeroOrMinusOneIfNot = ((b0 | -b0) >> 31);
-                // put the jth 2 bytes chars in the right fourChars slots
-                int firstChar = ((~zeroIfEqualsZeroOrMinusOneIfNot & ch0) | (zeroIfEqualsZeroOrMinusOneIfNot & '\\'));
-                int twoChars = (b0 << 8) | firstChar;
-                fourChars |= (long) twoChars << (j * 16);
-                // put the jth 2 bytes mask in the right compressMask slots
-                compressMask |= (long) (~zeroIfEqualsZeroOrMinusOneIfNot & 0xFF00) << (j * 16);
-            }
-            compressMask = ~compressMask;
-            // compress the fourChars into the newArray; this could be the same too!
-            long compressedChars = Long.compress(fourChars, compressMask);
+            int readChars = (int) INT_READER.get(original, i);
+            long latinChars = Long.expand(Integer.toUnsignedLong(readChars), 0x00FF_00FF_00FF_00FFL);
+            // it will be zero if it's a
+            byte b0 = silly_table3[(int) (latinChars & 0xFF)];
+            // place this near to the latinChars it refer to
+            latinChars |= (long) b0 << 8;
+            byte b1 = silly_table3[(int) ((latinChars >>> 16) & 0xFF)];
+            latinChars |= (long) b1 << 24;
+            byte b2 = silly_table3[(int) ((latinChars >>> 32) & 0xFF)];
+            latinChars |= (long) b2 << 40;
+            byte b3 = silly_table3[(int) ((latinChars >>> 48) & 0xFF)];
+            latinChars |= (long) b3 << 56;
+            // now we have R replacements chars, near to the originals S
+            // i.e. 0xRRSS_RRSS_RRSS_RRSS
+            // R == 0 -> keep       0x00SS  -> latinChars is already OK!
+            // R != 0 -> replace    0x00SS  with 0xRR92 -> latinChars need fixing!
+            // we are not interested into the replacement chars here - filter it out at the end
+            // then move it to the right position to apply this to the original chars
+            long ffIfNotZero = ((ffNotZeroBytes(latinChars) & 0xFF00_FF00_FF00_FF00L) >>> 8) | 0xFF00_FF00_FF00_FF00L;
+            // the last 0xFF00_FF00_FF00_FF00L is needed to make sure that the replacement chars are left untouched
+            // TODO this one after is likely wrong!
+            // we now want to make sure that, if the replacement is needed, each 0xRRSS is replaced by 0xRR92
+            long replacedChars = (((~ffIfNotZero & (latinChars & 0x00FF_00FF_00FF_00FFL)) |
+                  ffIfNotZero & 0x005c_005c_005c_005cL) | (latinChars & 0xFF00_FF00_FF00_FF00L));
+            long compressedChars = Long.compress(replacedChars, (ffIfNotZero << 8) | 0x00FF_00FF_00FF_00FFL);
             LONG_COMPRESS_WRITER.set(newArray, newArrayLength, compressedChars);
-            int chars = Long.bitCount(compressMask) / 8;
-            newArrayLength += chars;
+            int digits = Long.bitCount(ffIfNotZero) / 8;
+            newArrayLength += digits;
         }
         int tail = original.length % 4;
         for (int t = 0; t < tail; t++) {
