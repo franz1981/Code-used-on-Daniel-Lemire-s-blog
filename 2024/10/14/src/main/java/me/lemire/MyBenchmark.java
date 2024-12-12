@@ -293,23 +293,40 @@ public class MyBenchmark {
             // R != 0 -> replace    0x00SS  with 0xRR92 -> latinChars need fixing!
             // we are not interested into the replacement chars here - filter it out at the end
             // then move it to the right position to apply this to the original chars
-            long ffIfNotZero = ((ffNotZeroBytes(latinChars) & 0xFF00_FF00_FF00_FF00L) >>> 8) | 0xFF00_FF00_FF00_FF00L;
-            // the last 0xFF00_FF00_FF00_FF00L is needed to make sure that the replacement chars are left untouched
-            // TODO this one after is likely wrong!
-            // we now want to make sure that, if the replacement is needed, each 0xRRSS is replaced by 0xRR92
-            long replacedChars = (((~ffIfNotZero & (latinChars & 0x00FF_00FF_00FF_00FFL)) |
-                  ffIfNotZero & 0x005c_005c_005c_005cL) | (latinChars & 0xFF00_FF00_FF00_FF00L));
-            long compressedChars = Long.compress(replacedChars, (ffIfNotZero << 8) | 0x00FF_00FF_00FF_00FFL);
-            LONG_COMPRESS_WRITER.set(newArray, newArrayLength, compressedChars);
-            int digits = Long.bitCount(ffIfNotZero) / 8;
+            int digits = replaceChars(newArray, latinChars, newArrayLength);
             newArrayLength += digits;
         }
         int tail = original.length % 4;
-        for (int t = 0; t < tail; t++) {
-            int i = fourCharsBatches * 4 + t;
-            newArrayLength = writeToOutput(newArray, original[i], newArrayLength);
+        if (tail > 0) {
+            long latinChars = 0;
+            int idx = fourCharsBatches * 4;
+            byte b0 = silly_table3[(original[idx] & 0xFF)];
+            // place this near to the latinChars it refer to
+            latinChars |= (long) b0 << 8;
+            if (tail > 1) {
+                byte b1 = silly_table3[(original[idx + 1] & 0xFF)];
+                latinChars |= (long) b1 << 24;
+                if (tail > 2) {
+                    byte b2 = silly_table3[(original[idx + 2] & 0xFF)];
+                    latinChars |= (long) b2 << 40;
+                }
+            }
+            int digits = replaceChars(newArray, latinChars, newArrayLength);
+            newArrayLength += digits;
         }
         return newArrayLength;
+    }
+
+    private static int replaceChars(byte[] newArray, long latinChars, int newArrayLength) {
+        long ffIfNotZero = ((ffNotZeroBytes(latinChars) & 0xFF00_FF00_FF00_FF00L) >>> 8) | 0xFF00_FF00_FF00_FF00L;
+        // the last 0xFF00_FF00_FF00_FF00L is needed to make sure that the replacement chars are left untouched
+        // we now want to make sure that, if the replacement is needed, each 0xRRSS is replaced by 0xRR92
+        long replacedChars = (((~ffIfNotZero & (latinChars & 0x00FF_00FF_00FF_00FFL)) |
+              ffIfNotZero & 0x005c_005c_005c_005cL) | (latinChars & 0xFF00_FF00_FF00_FF00L));
+        long compressedChars = Long.compress(replacedChars, (ffIfNotZero << 8) | 0x00FF_00FF_00FF_00FFL);
+        LONG_COMPRESS_WRITER.set(newArray, newArrayLength, compressedChars);
+        int digits = Long.bitCount(ffIfNotZero) / 8;
+        return digits;
     }
 
     private static final VarHandle SHORT_WRITER = MethodHandles.byteArrayViewVarHandle(short[].class, ByteOrder.LITTLE_ENDIAN);
