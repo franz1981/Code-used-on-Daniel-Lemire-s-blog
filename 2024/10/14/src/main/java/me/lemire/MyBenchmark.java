@@ -170,7 +170,7 @@ public class MyBenchmark {
             for (int i = 0; i < size; i++) {
                 latinInputString[i] = (byte) inputstring[i];
             }
-            latinOutputString = new byte[outputLength + 7];
+            latinOutputString = new byte[outputLength + 8];
         }
     }
 
@@ -265,8 +265,8 @@ public class MyBenchmark {
 
 
     public static void main(String[] args) {
-        final byte[] input  = new byte[] { 'a', 'b', '\n', '\\'};
-        final byte[] output = new byte[input.length * 2];
+        final byte[] input  = new byte[] { 'a', 'b', '\n', '\\', 'c', '\\'};
+        final byte[] output = new byte[input.length  + 8];
         replaceBackslashRawCompressedTable3(input, output);
     }
 
@@ -276,17 +276,7 @@ public class MyBenchmark {
         for (int b = 0; b < fourCharsBatches; b++) {
             int i = b * 4;
             int readChars = (int) INT_READER.get(original, i);
-            long latinChars = Long.expand(Integer.toUnsignedLong(readChars), 0x00FF_00FF_00FF_00FFL);
-            // it will be zero if it's a
-            byte b0 = silly_table3[(int) (latinChars & 0xFF)];
-            // place this near to the latinChars it refer to
-            latinChars |= (long) b0 << 8;
-            byte b1 = silly_table3[(int) ((latinChars >>> 16) & 0xFF)];
-            latinChars |= (long) b1 << 24;
-            byte b2 = silly_table3[(int) ((latinChars >>> 32) & 0xFF)];
-            latinChars |= (long) b2 << 40;
-            byte b3 = silly_table3[(int) ((latinChars >>> 48) & 0xFF)];
-            latinChars |= (long) b3 << 56;
+            long latinChars = readCharsWithReplacements(readChars);
             // now we have R replacements chars, near to the originals S
             // i.e. 0xRRSS_RRSS_RRSS_RRSS
             // R == 0 -> keep       0x00SS  -> latinChars is already OK!
@@ -298,23 +288,49 @@ public class MyBenchmark {
         }
         int tail = original.length % 4;
         if (tail > 0) {
-            long latinChars = 0;
-            int idx = fourCharsBatches * 4;
-            byte b0 = silly_table3[(original[idx] & 0xFF)];
-            // place this near to the latinChars it refer to
-            latinChars |= (long) b0 << 8;
-            if (tail > 1) {
-                byte b1 = silly_table3[(original[idx + 1] & 0xFF)];
-                latinChars |= (long) b1 << 24;
-                if (tail > 2) {
-                    byte b2 = silly_table3[(original[idx + 2] & 0xFF)];
-                    latinChars |= (long) b2 << 40;
-                }
-            }
+            long latinChars = readTailCharsWithReplacements(original, fourCharsBatches, tail);
             int digits = replaceChars(newArray, latinChars, newArrayLength);
             newArrayLength += digits;
         }
         return newArrayLength;
+    }
+
+    private static long readCharsWithReplacements(int readChars) {
+        long latinChars = Long.expand(Integer.toUnsignedLong(readChars), 0x00FF_00FF_00FF_00FFL);
+        // it will be zero if it's a
+        byte b0 = silly_table3[(int) (latinChars & 0xFF)];
+        // place this near to the latinChars it refer to
+        latinChars |= (long) b0 << 8;
+        byte b1 = silly_table3[(int) ((latinChars >>> 16) & 0xFF)];
+        latinChars |= (long) b1 << 24;
+        byte b2 = silly_table3[(int) ((latinChars >>> 32) & 0xFF)];
+        latinChars |= (long) b2 << 40;
+        byte b3 = silly_table3[(int) ((latinChars >>> 48) & 0xFF)];
+        latinChars |= (long) b3 << 56;
+        return latinChars;
+    }
+
+    private static long readTailCharsWithReplacements(byte[] original, int fourCharsBatches, int tail) {
+        long latinChars = 0;
+        int idx = fourCharsBatches * 4;
+        byte ch  = original[idx];
+        byte b0 = silly_table3[(ch & 0xFF)];
+        // place this near to the latinChars it refer to
+        latinChars |= ch;
+        latinChars |= (long) b0 << 8;
+        if (tail > 1) {
+            ch = original[idx + 1];
+            byte b1 = silly_table3[(ch & 0xFF)];
+            latinChars |= (long) ch << 16;
+            latinChars |= (long) b1 << 24;
+            if (tail > 2) {
+                ch =  original[idx + 2];
+                byte b2 = silly_table3[(ch & 0xFF)];
+                latinChars |= (long) ch << 32;
+                latinChars |= (long) b2 << 40;
+            }
+        }
+        return latinChars;
     }
 
     private static int replaceChars(byte[] newArray, long latinChars, int newArrayLength) {
